@@ -12,7 +12,7 @@
   "summary_threshold": 8,
   "seen_file": "logs/seen.json",
   "telegram": {
-    "bot_token": "",
-    "chat_id": ""
+    "bot_token": "8743748068:AAFui4tmGAF8_WRQJf1PSVHpO394-frQEv4",
+    "chat_id": "-5505060472"
   }
 }
