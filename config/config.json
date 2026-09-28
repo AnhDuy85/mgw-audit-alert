@@ -1,0 +1,18 @@
+{
+  "_comment": "Cấu hình MGW audit monitor (không nhạy cảm). SSH + Telegram credential điền ở config/secret.json (gitignore) hoặc env. File này dùng cho mgw_audit_monitor.py khi có log local; collect_audit.py đọc trực tiếp qua SSH.",
+  "audit_dir": "/opt/mwg/log/audit",
+  "audit_glob": "audit*.log",
+  "watch_actions": [
+    "ADDED_CONTENT",
+    "DELETED_CONTENT",
+    "MODIFIED_CONTENT",
+    "MODIFIED_RULE"
+  ],
+  "interval_minutes": 5,
+  "summary_threshold": 8,
+  "seen_file": "logs/seen.json",
+  "telegram": {
+    "bot_token": "",
+    "chat_id": ""
+  }
+}
