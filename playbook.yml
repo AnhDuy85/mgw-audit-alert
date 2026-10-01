@@ -3,16 +3,24 @@
 # Mục đích : SSH vào McAfee/Trellix Web Gateway lấy audit log,
 #            lọc thay đổi cấu hình (ADD/DELETE/MODIFIED content,
 #            MODIFIED rule) và gửi cảnh báo Telegram.
-#            Chạy định kỳ qua AWX Schedule (vd mỗi 1 phút) để
-#            cảnh báo gần real-time các thay đổi trong ngày.
+#            Chạy định kỳ qua AWX Schedule (vd mỗi 1 phút).
 #
-# Credential (KHÔNG commit - lấy từ AWX):
-#   - Machine/Custom credential MGW -> env MGW_HOST / MGW_USER /
-#     MGW_SSH_PASSWORD (hoặc SSH key).
-#   - Telegram credential -> env TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID.
+# Credential: dùng 1 biến "secret_data" (AWX Credential/Extra Vars),
+# KHÔNG commit, cấu trúc:
+#   secret_data:
+#     telegram_bot_token: "123456:ABC..."
+#     telegram_chat_id:   "-100..."
+#     mgw:
+#       host: "10.4.255.98"
+#       user: "pci-dss"
+#       password: "***"
+#       port: 22
 #
-# Yêu cầu: AWX EE có python3 + ssh/sshpass (hoặc dùng SSH key).
-#          Toàn bộ code Python chỉ dùng stdlib (không pip).
+# Playbook ghi secret_data ra config/secret.json luc runtime roi chay
+# scripts/collect_audit.py (script tu doc secret.json).
+#
+# Yêu cầu: AWX EE có python3 + sshpass (dùng password) hoặc SSH key.
+#          Code Python chỉ dùng stdlib (không pip).
 # ============================================================
 
 - name: MGW Audit Alert - gui canh bao thay doi cau hinh ra Telegram
@@ -23,11 +31,10 @@
   vars:
     project_dir: "{{ playbook_dir }}"
     python_bin: "python3"
-    # Phạm vi quét: today = chỉ thay đổi trong ngày (khuyến nghị cho alert
-    # hằng ngày). Đặt scan_scope=all để theo dõi mọi ngày.
+    secret_file: "{{ playbook_dir }}/config/secret.json"
+    # today = chỉ thay đổi trong ngày (khuyến nghị). all = mọi ngày.
     scan_scope: "today"
-    # Nếu dùng sshpass (EE có sshpass + MGW_SSH_PASSWORD). Nếu dùng SSH key,
-    # đặt use_sshpass=false và cung cấp ssh_key_path.
+    # EE Linux: dùng sshpass (cần EE có sshpass). Hoặc đặt ssh_key_path.
     use_sshpass: true
     ssh_key_path: ""
 
@@ -37,24 +44,42 @@
       register: py_check
       changed_when: false
 
-    - name: Kiem tra credential MGW va Telegram da duoc gan (env tu AWX)
+    - name: Kiem tra secret_data da duoc gan vao Job Template
       ansible.builtin.assert:
         that:
-          - lookup('env', 'MGW_HOST') | length > 0
-          - lookup('env', 'TELEGRAM_BOT_TOKEN') | length > 0
-          - lookup('env', 'TELEGRAM_CHAT_ID') | length > 0
+          - secret_data is defined
+          - secret_data.telegram_bot_token is defined
+          - secret_data.telegram_bot_token | length > 0
+          - secret_data.mgw is defined
+          - secret_data.mgw.host is defined
+          - secret_data.mgw.password is defined
         fail_msg: >-
-          Thieu credential. Gan vao Job Template: MGW (env MGW_HOST/MGW_USER/
-          MGW_SSH_PASSWORD) va Telegram (env TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID).
+          Thieu 'secret_data'. Gan Credential/Extra Vars chua
+          telegram_bot_token, telegram_chat_id va mgw{host,user,password,port}.
 
-    - name: Build tham so scope
+    # Ghi secret.json tu secret_data (mode 0600, no_log de khong lo secret).
+    - name: Sinh config/secret.json tu secret_data
+      ansible.builtin.copy:
+        content: >-
+          {{ {
+               'mgw': secret_data.mgw,
+               'telegram': {
+                 'bot_token': secret_data.telegram_bot_token,
+                 'chat_id': secret_data.telegram_chat_id | default('')
+               }
+             } | to_nice_json }}
+        dest: "{{ secret_file }}"
+        mode: '0600'
+      no_log: true
+
+    - name: Build tham so
       ansible.builtin.set_fact:
         scope_flag: "{{ '--today' if scan_scope == 'today' else '--all-days' }}"
         key_flag: "{{ ('--key ' + ssh_key_path) if (ssh_key_path | length > 0) else '' }}"
         sshpass_flag: "{{ '--sshpass' if (use_sshpass | bool and ssh_key_path | length == 0) else '' }}"
 
-    # Chạy engine: --alert gửi Telegram, --yes bỏ xác nhận (tự động hoá).
-    # Host/user/password/token đọc từ env (AWX inject) - KHÔNG hardcode.
+    # Chay 1 lan (--alert). AWX Schedule dinh ky thay cho --loop.
+    # Script doc host/user/password/telegram tu secret.json vua sinh.
     - name: Chay MGW audit alert
       ansible.builtin.command:
         cmd: >-
@@ -67,13 +92,21 @@
       environment:
         PYTHONUNBUFFERED: "1"
         TZ: "Asia/Ho_Chi_Minh"
-        MGW_HOST: "{{ lookup('env', 'MGW_HOST') }}"
-        MGW_USER: "{{ lookup('env', 'MGW_USER') | default('pci-dss', true) }}"
-        MGW_SSH_PASSWORD: "{{ lookup('env', 'MGW_SSH_PASSWORD') }}"
-        TELEGRAM_BOT_TOKEN: "{{ lookup('env', 'TELEGRAM_BOT_TOKEN') }}"
-        TELEGRAM_CHAT_ID: "{{ lookup('env', 'TELEGRAM_CHAT_ID') }}"
 
     - name: Output
       ansible.builtin.debug:
         msg: "{{ result.stdout_lines }}"
+      when: result.stdout_lines | length > 0
+
+    # Doc dedup state (seen_*.json) khong persistent giua cac lan chay AWX ->
+    # moi lan chay se coi tat ca la "moi". De tranh gui trung, hoac:
+    #   (a) mount persistent volume vao logs/, HOAC
+    #   (b) chap nhan: dung --today + AWX chay 1 phut/lan, dedup trong ngay
+    #       chi hieu luc neu logs/ persistent.
+    # Neu logs/ KHONG persistent, nen c.n nhac dung --loop tren 1 host co dinh.
+    - name: Luu y dedup state
+      ansible.builtin.debug:
+        msg: >-
+          Neu AWX khong mount persistent volume vao {{ project_dir }}/logs,
+          dedup se reset moi lan chay. Can mount volume hoac chay --loop tren host co dinh.
       when: result.stdout_lines | length > 0
