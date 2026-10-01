@@ -351,7 +351,8 @@ def daily_alert(host, user, remote_dir, pattern, key, port, use_sshpass, passwor
                 "MGW AUDIT - LỖI ĐỌC LOG",
                 f"Không đọc được audit log từ {host} (rc={rc}).\n{rc_hint}",
                 severity="critical"))
-        return 1
+        # Tra -1 = LOI (phan biet voi "so tin da gui" >=0). main() quy doi ve exit!=0.
+        return -1
 
     changes, iso_date = _get_changes(raw, watch_actions, filter_date)
     print(f"Ngày {iso_date or '(all)'}: {len(changes)} thay đổi cấu hình.")
@@ -486,6 +487,7 @@ def main():
 
         def _one_pass():
             # seen theo NGÀY (hoặc 'all') -> dedup, chạy lại không gửi trùng.
+            # Tra ve so tin da gui (>=0) hoac -1 neu LOI doc log.
             fd = "" if args.all_days else (args.date or datetime_today())
             seen_path = str(Path(__file__).resolve().parent.parent / "logs" /
                             f"seen_{fd or 'all'}.json")
@@ -509,7 +511,9 @@ def main():
                 _t.sleep(args.interval)
             return 0
 
-        return _one_pass()
+        # Quy doi: -1 (loi doc log) -> exit 1; so tin da gui (>=0) -> exit 0 (thanh cong).
+        res = _one_pass()
+        return 0 if res is not None and res >= 0 else 1
 
     # Chế độ xem trực tiếp: SSH -> parse -> in màn hình, không lưu file.
     if args.show:
