@@ -264,9 +264,32 @@ def _get_changes(raw, watch_actions, filter_date=""):
     return deduped, iso_date
 
 
-def show_direct(host, user, remote_dir, pattern, key, port, use_sshpass, password, watch_actions, filter_date=""):
-    """Đọc audit log trực tiếp qua SSH và HIỂN THỊ thay đổi ra màn hình."""
-    raw, rc = fetch_audit_raw(host, user, remote_dir, pattern, key, port, use_sshpass, password)
+def _read_file_raw(from_file, quiet=False):
+    """Doc raw audit log tu file da co san (phuong an AWX: Ansible lay log ve).
+    Tra ve (raw, rc) giong fetch_audit_raw."""
+    p = Path(from_file)
+    if not p.exists():
+        if not quiet:
+            print(f"   [from-file] khong tim thay file: {from_file}")
+        return "", 2
+    try:
+        raw = p.read_text(encoding="utf-8", errors="replace")
+    except Exception as e:
+        if not quiet:
+            print(f"   [from-file] doc loi: {e}")
+        return "", 2
+    if not quiet:
+        print(f"Doc audit log tu file {from_file} ({len(raw)} bytes).")
+    return raw, 0
+
+
+def show_direct(host, user, remote_dir, pattern, key, port, use_sshpass, password,
+                watch_actions, filter_date="", from_file=""):
+    """Đọc audit log (SSH hoặc file) và HIỂN THỊ thay đổi ra màn hình."""
+    if from_file:
+        raw, rc = _read_file_raw(from_file)
+    else:
+        raw, rc = fetch_audit_raw(host, user, remote_dir, pattern, key, port, use_sshpass, password)
     if rc != 0 or not raw.strip():
         print("❌ Không đọc được audit log (rc=%d). Kiểm tra host(IP)/user/password/mạng." % rc)
         return 1
@@ -298,7 +321,7 @@ def show_direct(host, user, remote_dir, pattern, key, port, use_sshpass, passwor
 
 def daily_alert(host, user, remote_dir, pattern, key, port, use_sshpass, password,
                 watch_actions, filter_date, tg_token, tg_chat, seen_path,
-                summary_threshold=12, dry_run=False):
+                summary_threshold=12, dry_run=False, from_file=""):
     """
     MỤC TIÊU CHÍNH: đẩy cảnh báo Telegram các thay đổi audit THEO NGÀY.
       - SSH lấy audit log của ngày (filter_date).
@@ -310,13 +333,17 @@ def daily_alert(host, user, remote_dir, pattern, key, port, use_sshpass, passwor
     import telegram_notify as tg
     import audit_parser as ap_mod
 
-    raw, rc = fetch_audit_raw(host, user, remote_dir, pattern, key, port, use_sshpass, password, quiet=True)
+    if from_file:
+        raw, rc = _read_file_raw(from_file, quiet=True)
+    else:
+        raw, rc = fetch_audit_raw(host, user, remote_dir, pattern, key, port, use_sshpass, password, quiet=True)
     if rc != 0 or not raw.strip():
         rc_hint = {
             255: "Thieu cach dang nhap tu dong (khong co sshpass/plink/key) hoac auth bi tu choi.",
             124: "SSH TIMEOUT - mang khong toi MGW hoac dang cho nhap password.",
             127: "Khong tim thay lenh ssh/plink tren EE.",
-            0:   "SSH OK nhung log rong (sai pattern/remote-dir hoac khong co quyen doc).",
+            2:   "Khong doc duoc file --from-file (Ansible chua lay log ve?).",
+            0:   "Doc OK nhung log rong (sai pattern/remote-dir hoac khong co quyen doc).",
         }.get(rc, "Loi khong xac dinh.")
         print("❌ Không đọc được audit log (rc=%d): %s" % (rc, rc_hint))
         if tg_token and tg_chat and not dry_run:
@@ -416,6 +443,9 @@ def main():
                     help="Chu kỳ quét khi --loop (giây, mặc định 60)")
     ap.add_argument("--all-days", action="store_true",
                     help="Với --alert: theo dõi TẤT CẢ (không giới hạn ngày) - phát hiện thay đổi mới bất kỳ")
+    ap.add_argument("--from-file", default="",
+                    help="Doc audit log tu FILE da co san (khong SSH). Dung cho AWX: "
+                         "Ansible tu lay log ve roi truyen file vao day.")
     args = ap.parse_args()
 
     # Với --today/--date: LẤY TẤT CẢ audit*.log (glob '*' bền vững trên mọi sh,
@@ -426,8 +456,9 @@ def main():
     # Password: ưu tiên secret.json/env (để plink auto-login), fallback sshpass.
     password = _sec["password"] or (os.environ.get("MGW_SSH_PASSWORD", "") if args.sshpass else "")
 
-    if not args.host:
-        print("❌ Chưa có host. Điền IP MGW vào config/secret.json (mgw.host) hoặc dùng --host <IP>.")
+    if not args.host and not args.from_file:
+        print("❌ Chưa có host. Điền IP MGW vào config/secret.json (mgw.host), dùng --host <IP>, "
+              "hoặc --from-file <đường dẫn log>.")
         return 1
 
     pattern = args.pattern  # audit*.log - lấy tất cả, lọc ngày ở Python
@@ -460,7 +491,8 @@ def main():
                             f"seen_{fd or 'all'}.json")
             return daily_alert(args.host, args.user, args.remote_dir, pattern, args.key,
                                args.port, args.sshpass, password, watch, fd,
-                               tg_token, tg_chat, seen_path, dry_run=args.dry_run)
+                               tg_token, tg_chat, seen_path, dry_run=args.dry_run,
+                               from_file=args.from_file)
 
         # LOOP: quét liên tục, có thay đổi MỚI -> alert NGAY.
         if args.loop:
@@ -483,7 +515,7 @@ def main():
     if args.show:
         return show_direct(args.host, args.user, args.remote_dir, pattern,
                            args.key, args.port, args.sshpass, password, watch,
-                           filter_date=filter_date)
+                           filter_date=filter_date, from_file=args.from_file)
 
     if args.method == "scp":
         ok, msg = collect_scp(args.host, args.user, args.remote_dir, args.pattern,

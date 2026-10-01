@@ -1,12 +1,10 @@
 # ============================================================
-# Playbook: MGW Audit Alert (AWX)
-# Mục đích : SSH vào McAfee/Trellix Web Gateway lấy audit log,
-#            lọc thay đổi cấu hình (ADD/DELETE/MODIFIED content,
-#            MODIFIED rule) và gửi cảnh báo Telegram.
-#            Chạy định kỳ qua AWX Schedule (vd mỗi 1 phút).
+# Playbook: MGW Audit Alert (AWX) - PHUONG AN 1
+# Ansible TU SSH vao McAfee/Trellix Web Gateway lay audit log
+# (dung paramiko => KHONG can sshpass tren EE), roi chay
+# scripts/collect_audit.py --from-file de parse + gui Telegram.
 #
-# Credential: dùng 1 biến "secret_data" (AWX Credential/Extra Vars),
-# KHÔNG commit, cấu trúc:
+# Credential: 1 bien "secret_data" (AWX Credential/Extra Vars), cau truc:
 #   secret_data:
 #     telegram_bot_token: "123456:ABC..."
 #     telegram_chat_id:   "-100..."
@@ -16,14 +14,11 @@
 #       password: "***"
 #       port: 22
 #
-# Playbook ghi secret_data ra config/secret.json luc runtime roi chay
-# scripts/collect_audit.py (script tu doc secret.json).
-#
-# Yêu cầu: AWX EE có python3 + sshpass (dùng password) hoặc SSH key.
-#          Code Python chỉ dùng stdlib (không pip).
+# Yeu cau EE: python3 + ansible paramiko (co san). KHONG can sshpass/plink.
+# Code Python chi dung stdlib.
 # ============================================================
 
-- name: MGW Audit Alert - gui canh bao thay doi cau hinh ra Telegram
+- name: MGW Audit Alert - lay log + gui canh bao Telegram
   hosts: localhost
   connection: local
   gather_facts: false
@@ -32,11 +27,11 @@
     project_dir: "{{ playbook_dir }}"
     python_bin: "python3"
     secret_file: "{{ playbook_dir }}/config/secret.json"
-    # today = chỉ thay đổi trong ngày (khuyến nghị). all = mọi ngày.
+    raw_log_file: "{{ playbook_dir }}/logs/mgw_audit_raw.log"
+    remote_dir: "/opt/mwg/log/audit"
+    remote_pattern: "audit*.log"
+    # today = chi thay doi trong ngay (khuyen nghi). all = moi ngay.
     scan_scope: "today"
-    # EE Linux: dùng sshpass (cần EE có sshpass). Hoặc đặt ssh_key_path.
-    use_sshpass: true
-    ssh_key_path: ""
 
   tasks:
     - name: Kiem tra python3
@@ -57,7 +52,7 @@
           Thieu 'secret_data'. Gan Credential/Extra Vars chua
           telegram_bot_token, telegram_chat_id va mgw{host,user,password,port}.
 
-    # Ghi secret.json tu secret_data (mode 0600, no_log de khong lo secret).
+    # Ghi secret.json (chi telegram - script doc token/chat tu day; mgw lay qua Ansible).
     - name: Sinh config/secret.json tu secret_data
       ansible.builtin.copy:
         content: >-
@@ -72,24 +67,91 @@
         mode: '0600'
       no_log: true
 
-    - name: Build tham so
+    # Them MGW vao inventory runtime. paramiko = xu ly password thuan Python,
+    # KHONG can sshpass tren EE.
+    - name: Them host MGW vao inventory runtime
+      ansible.builtin.add_host:
+        name: mgw_target
+        ansible_host: "{{ secret_data.mgw.host }}"
+        ansible_user: "{{ secret_data.mgw.user | default('pci-dss') }}"
+        ansible_password: "{{ secret_data.mgw.password }}"
+        ansible_port: "{{ secret_data.mgw.port | default(22) }}"
+        ansible_connection: paramiko
+        ansible_paramiko_look_for_keys: false
+        ansible_host_key_checking: false
+        ansible_python_interpreter: /usr/bin/python
+      no_log: true
+
+- name: Lay audit log tu MGW
+  hosts: mgw_target
+  gather_facts: false
+
+  tasks:
+    # cat tat ca audit*.log; loc ngay o tang Python (collect_audit --today).
+    # raw = ansible.builtin.raw -> KHONG can python tren MGW.
+    - name: Cat audit log tren MGW
+      ansible.builtin.raw: "cat /opt/mwg/log/audit/audit*.log 2>/dev/null"
+      register: mgw_raw
+      changed_when: false
+      failed_when: false
+
+- name: Parse + gui Telegram
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    project_dir: "{{ playbook_dir }}"
+    python_bin: "python3"
+    raw_log_file: "{{ playbook_dir }}/logs/mgw_audit_raw.log"
+    scan_scope: "today"
+
+  tasks:
+    - name: Lay raw log tu play truoc
+      ansible.builtin.set_fact:
+        mgw_audit_raw: "{{ hostvars['mgw_target']['mgw_raw'].stdout | default('') }}"
+        mgw_audit_rc: "{{ hostvars['mgw_target']['mgw_raw'].rc | default(1) }}"
+
+    - name: Canh bao Telegram neu KHONG lay duoc log tu MGW
+      ansible.builtin.command:
+        cmd: >-
+          {{ python_bin }} {{ project_dir }}/scripts/notify_system_error.py
+          "{{ secret_data.mgw.host }}" "{{ mgw_audit_rc }}"
+        chdir: "{{ project_dir }}/scripts"
+      when: (mgw_audit_rc | int != 0) or (mgw_audit_raw | length == 0)
+      changed_when: false
+      failed_when: false
+
+    - name: Dung lai neu khong co log
+      ansible.builtin.fail:
+        msg: "Khong lay duoc audit log tu MGW (rc={{ mgw_audit_rc }}, bytes={{ mgw_audit_raw | length }}). Da gui alert Telegram."
+      when: (mgw_audit_rc | int != 0) or (mgw_audit_raw | length == 0)
+
+    - name: Dam bao thu muc logs ton tai
+      ansible.builtin.file:
+        path: "{{ project_dir }}/logs"
+        state: directory
+        mode: '0700'
+
+    - name: Ghi raw log ra file tam
+      ansible.builtin.copy:
+        content: "{{ mgw_audit_raw }}"
+        dest: "{{ raw_log_file }}"
+        mode: '0600'
+      no_log: true
+
+    - name: Build tham so scope
       ansible.builtin.set_fact:
         scope_flag: "{{ '--today' if scan_scope == 'today' else '--all-days' }}"
-        key_flag: "{{ ('--key ' + ssh_key_path) if (ssh_key_path | length > 0) else '' }}"
-        sshpass_flag: "{{ '--sshpass' if (use_sshpass | bool and ssh_key_path | length == 0) else '' }}"
 
-    # Chay 1 lan (--alert). AWX Schedule dinh ky thay cho --loop.
-    # Script doc host/user/password/telegram tu secret.json vua sinh.
-    - name: Chay MGW audit alert
+    - name: Chay MGW audit alert (--from-file)
       ansible.builtin.command:
         cmd: >-
           {{ python_bin }} {{ project_dir }}/scripts/collect_audit.py
-          --alert {{ scope_flag }} {{ key_flag }} {{ sshpass_flag }}
+          --alert {{ scope_flag }} --from-file {{ raw_log_file }}
         chdir: "{{ project_dir }}/scripts"
       register: result
       changed_when: "'Đã gửi' in result.stdout"
-      # KHONG fail cung: script tu gui alert loi Telegram khi SSH fail; ta can
-      # thay output chan doan (rc/hint) o task Output ben duoi.
       failed_when: false
       environment:
         PYTHONUNBUFFERED: "1"
@@ -104,19 +166,20 @@
           - "--- STDERR ---"
           - "{{ result.stderr_lines | default([]) }}"
 
+    - name: Xoa raw log tam (tranh luu log tren disk EE)
+      ansible.builtin.file:
+        path: "{{ raw_log_file }}"
+        state: absent
+
     - name: Bao fail neu script loi
       ansible.builtin.fail:
-        msg: "collect_audit.py tra rc={{ result.rc }}. Xem Output o tren de biet nguyen nhan."
+        msg: "collect_audit.py tra rc={{ result.rc }}. Xem Output o tren."
       when: result.rc | default(1) != 0
 
-    # Doc dedup state (seen_*.json) khong persistent giua cac lan chay AWX ->
-    # moi lan chay se coi tat ca la "moi". De tranh gui trung, hoac:
-    #   (a) mount persistent volume vao logs/, HOAC
-    #   (b) chap nhan: dung --today + AWX chay 1 phut/lan, dedup trong ngay
-    #       chi hieu luc neu logs/ persistent.
-    # Neu logs/ KHONG persistent, nen c.n nhac dung --loop tren 1 host co dinh.
+    # Luu y: dedup state logs/seen_*.json chi hieu luc neu AWX mount persistent
+    # volume vao {{ project_dir }}/logs. Neu khong, moi lan chay coi tat ca la moi.
     - name: Luu y dedup state
       ansible.builtin.debug:
         msg: >-
           Neu AWX khong mount persistent volume vao {{ project_dir }}/logs,
-          dedup se reset moi lan chay. Can mount volume hoac chay --loop tren host co dinh.
+          dedup se reset moi lan chay (co the gui trung). Can mount volume de giu seen_*.json.
