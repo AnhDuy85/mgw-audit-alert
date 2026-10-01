@@ -88,15 +88,26 @@
         chdir: "{{ project_dir }}/scripts"
       register: result
       changed_when: "'Đã gửi' in result.stdout"
-      timeout: 120
+      # KHONG fail cung: script tu gui alert loi Telegram khi SSH fail; ta can
+      # thay output chan doan (rc/hint) o task Output ben duoi.
+      failed_when: false
       environment:
         PYTHONUNBUFFERED: "1"
         TZ: "Asia/Ho_Chi_Minh"
 
-    - name: Output
+    - name: Output (stdout + stderr de chan doan)
       ansible.builtin.debug:
-        msg: "{{ result.stdout_lines }}"
-      when: result.stdout_lines | length > 0
+        msg:
+          - "rc = {{ result.rc | default('?') }}"
+          - "--- STDOUT ---"
+          - "{{ result.stdout_lines | default([]) }}"
+          - "--- STDERR ---"
+          - "{{ result.stderr_lines | default([]) }}"
+
+    - name: Bao fail neu script loi
+      ansible.builtin.fail:
+        msg: "collect_audit.py tra rc={{ result.rc }}. Xem Output o tren de biet nguyen nhan."
+      when: result.rc | default(1) != 0
 
     # Doc dedup state (seen_*.json) khong persistent giua cac lan chay AWX ->
     # moi lan chay se coi tat ca la "moi". De tranh gui trung, hoac:
@@ -109,4 +120,3 @@
         msg: >-
           Neu AWX khong mount persistent volume vao {{ project_dir }}/logs,
           dedup se reset moi lan chay. Can mount volume hoac chay --loop tren host co dinh.
-      when: result.stdout_lines | length > 0

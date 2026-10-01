@@ -103,7 +103,14 @@ def _ssh_base(key, port, use_sshpass, password):
     base = []
     if use_sshpass and password:
         base = ["sshpass", "-p", password]
-    ssh = base + ["ssh", "-p", str(port), "-o", "StrictHostKeyChecking=no"]
+    ssh = base + ["ssh", "-p", str(port),
+                  "-o", "StrictHostKeyChecking=no",
+                  "-o", "ConnectTimeout=15"]
+    # Nếu KHÔNG có sshpass (không thể nhập password tự động) và KHÔNG dùng
+    # key -> ép BatchMode để ssh FAIL NHANH thay vì treo chờ nhập password
+    # (quan trọng trên AWX EE không có TTY).
+    if not (use_sshpass and password):
+        ssh += ["-o", "BatchMode=yes"]
     if key:
         ssh += ["-i", os.path.expanduser(key)]
     return ssh
@@ -169,25 +176,61 @@ def _has_sshpass():
 
 
 def fetch_audit_raw(host, user, remote_dir, pattern, key, port, use_sshpass, password, quiet=False):
-    """SSH vào MGW, cat file audit khớp pattern, trả về (raw_text, rc)."""
+    """SSH vào MGW, cat file audit khớp pattern, trả về (raw_text, rc).
+
+    Thứ tự ưu tiên auth tự động (không TTY):
+      1) plink (-pw)      — Windows/PuTTY
+      2) sshpass (-p)     — Linux (AWX EE cần cài sshpass)
+      3) SSH key (-i)     — không cần password
+    Nếu CHỈ có password nhưng KHÔNG có plink/sshpass và KHÔNG có key ->
+    không có cách login tự động -> trả rc=255 kèm thông báo rõ (KHÔNG treo).
+    """
     target = f"{user}@{host}"
     remote_cmd = f"cat {remote_dir}/{pattern} 2>/dev/null"
 
     plink = _find_plink()
-    if password and plink:
-        cmd = [plink, "-ssh", "-P", str(port), "-l", user, "-pw", password, host, remote_cmd]
+    have_sshpass = _has_sshpass()
+
+    # Chẩn đoán: có password mà không có cách nào auto-login -> fail nhanh, rõ.
+    if password and not plink and not have_sshpass and not key:
+        msg = ("Khong co cach dang nhap tu dong: thieu plink (Windows) va "
+               "sshpass (Linux), lai khong co SSH key. "
+               "Tren AWX EE: cai sshpass vao Execution Environment HOAC "
+               "dung SSH key (ssh_key_path).")
+        if not quiet:
+            print("   [auth] " + msg)
+        return "", 255
+
+    use_plink = bool(password and plink)
+    if use_plink:
+        cmd = [plink, "-ssh", "-P", str(port), "-l", user, "-pw", password,
+               "-batch", host, remote_cmd]
         if not quiet:
             print(f"Đọc {remote_dir}/{pattern} từ {host} qua plink (auto-login)...")
     else:
-        ssh = _ssh_base(key, port, use_sshpass, password)
+        # Ép sshpass nếu có password + sshpass khả dụng (AWX EE Linux).
+        eff_sshpass = use_sshpass or (bool(password) and have_sshpass)
+        ssh = _ssh_base(key, port, eff_sshpass, password)
         cmd = ssh + [target, remote_cmd]
         if not quiet:
-            print(f"Đọc {remote_dir}/{pattern} từ {host} qua ssh...")
+            how = "sshpass" if (eff_sshpass and password) else ("key" if key else "ssh")
+            print(f"Đọc {remote_dir}/{pattern} từ {host} qua {how}...")
 
     # Capture stdout (nội dung log) + stderr (lỗi) riêng để chẩn đoán.
-    stdin_input = "y\n" if (password and plink) else None
-    proc = subprocess.run(cmd, capture_output=True, text=True,
-                          input=stdin_input, encoding="utf-8", errors="replace")
+    # timeout tránh treo vô hạn trên AWX (BatchMode đã ép fail nhanh với ssh).
+    stdin_input = "y\n" if use_plink else None
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              input=stdin_input, encoding="utf-8",
+                              errors="replace", timeout=60)
+    except subprocess.TimeoutExpired:
+        if not quiet:
+            print("   [ssh/plink] TIMEOUT sau 60s - co the dang cho nhap password/mang chet.")
+        return "", 124
+    except FileNotFoundError as e:
+        if not quiet:
+            print(f"   [ssh/plink] khong tim thay lenh: {e}")
+        return "", 127
     raw = proc.stdout or ""
     if proc.returncode != 0 and not quiet:
         err = (proc.stderr or "").strip()
@@ -269,11 +312,17 @@ def daily_alert(host, user, remote_dir, pattern, key, port, use_sshpass, passwor
 
     raw, rc = fetch_audit_raw(host, user, remote_dir, pattern, key, port, use_sshpass, password, quiet=True)
     if rc != 0 or not raw.strip():
-        print("❌ Không đọc được audit log (rc=%d)." % rc)
+        rc_hint = {
+            255: "Thieu cach dang nhap tu dong (khong co sshpass/plink/key) hoac auth bi tu choi.",
+            124: "SSH TIMEOUT - mang khong toi MGW hoac dang cho nhap password.",
+            127: "Khong tim thay lenh ssh/plink tren EE.",
+            0:   "SSH OK nhung log rong (sai pattern/remote-dir hoac khong co quyen doc).",
+        }.get(rc, "Loi khong xac dinh.")
+        print("❌ Không đọc được audit log (rc=%d): %s" % (rc, rc_hint))
         if tg_token and tg_chat and not dry_run:
             tg._send_raw(tg_token, tg_chat, tg.build_alert_system(
                 "MGW AUDIT - LỖI ĐỌC LOG",
-                f"Không đọc được audit log từ {host} (rc={rc}). Kiểm tra kết nối/credential.",
+                f"Không đọc được audit log từ {host} (rc={rc}).\n{rc_hint}",
                 severity="critical"))
         return 1
 
