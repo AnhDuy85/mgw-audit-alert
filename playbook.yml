@@ -30,8 +30,6 @@
     raw_log_file: "{{ playbook_dir }}/logs/mgw_audit_raw.log"
     remote_dir: "/opt/mwg/log/audit"
     remote_pattern: "audit*.log"
-    # today = chi thay doi trong ngay (khuyen nghi). all = moi ngay.
-    scan_scope: "today"
 
   tasks:
     - name: Kiem tra python3
@@ -104,7 +102,10 @@
     project_dir: "{{ playbook_dir }}"
     python_bin: "python3"
     raw_log_file: "{{ playbook_dir }}/logs/mgw_audit_raw.log"
-    scan_scope: "today"
+    # Chi alert thay doi trong N phut gan nhat. Dat = chu ky AWX Schedule
+    # (vd Schedule chay moi 10' -> window_minutes: 10). Khong co thay doi
+    # trong cua so nay -> KHONG alert.
+    window_minutes: 10
 
   tasks:
     - name: Lay raw log tu play truoc
@@ -140,15 +141,11 @@
         mode: '0600'
       no_log: true
 
-    - name: Build tham so scope
-      ansible.builtin.set_fact:
-        scope_flag: "{{ '--today' if scan_scope == 'today' else '--all-days' }}"
-
-    - name: Chay MGW audit alert (--from-file)
+    - name: Chay MGW audit alert (--from-file, cua so {{ window_minutes }}')
       ansible.builtin.command:
         cmd: >-
           {{ python_bin }} {{ project_dir }}/scripts/collect_audit.py
-          --alert {{ scope_flag }} --from-file {{ raw_log_file }}
+          --alert --window {{ window_minutes }} --from-file {{ raw_log_file }}
         chdir: "{{ project_dir }}/scripts"
       register: result
       changed_when: "'Đã gửi' in result.stdout"

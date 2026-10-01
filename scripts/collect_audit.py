@@ -239,8 +239,9 @@ def fetch_audit_raw(host, user, remote_dir, pattern, key, port, use_sshpass, pas
     return raw, proc.returncode
 
 
-def _get_changes(raw, watch_actions, filter_date=""):
-    """Parse raw + lọc watch_actions + khử DUPLICATE + (tuỳ chọn) lọc theo ngày."""
+def _get_changes(raw, watch_actions, filter_date="", window_minutes=0):
+    """Parse raw + lọc watch_actions + khử DUPLICATE + (tuỳ chọn) lọc theo ngày
+    + (tuỳ chọn) lọc theo CỬA SỔ thời gian window_minutes phút gần nhất."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import audit_parser as ap_mod
     events = ap_mod.parse_audit_text(raw)
@@ -249,6 +250,23 @@ def _get_changes(raw, watch_actions, filter_date=""):
     iso_date = _yymmdd_to_iso_prefix(filter_date) if filter_date else ""
     if iso_date:
         changes = [e for e in changes if e.get("date") == iso_date]
+
+    # Lọc cửa sổ thời gian: chỉ giữ sự kiện trong window_minutes phút gần nhất.
+    # Dùng khi muốn alert gần real-time (vd AWX chạy mỗi 10' -> window=10).
+    if window_minutes and window_minutes > 0:
+        from datetime import datetime, timedelta
+        now = datetime.now()
+        lo = now - timedelta(minutes=window_minutes)
+        kept = []
+        for e in changes:
+            iso = e.get("timestamp", "")
+            try:
+                dt = datetime.strptime(iso, "%Y-%m-%dT%H:%M:%S")
+            except (ValueError, TypeError):
+                continue  # không parse được thời gian -> bỏ qua (an toàn)
+            if lo <= dt <= now + timedelta(minutes=1):  # +1' phòng lệch đồng hồ
+                kept.append(e)
+        changes = kept
 
     # Khử SỰ KIỆN trùng nhau (entries đã được parser khử trùng lặp sẵn):
     # cùng (timestamp, user, action, source, entries) -> giữ 1.
@@ -284,7 +302,7 @@ def _read_file_raw(from_file, quiet=False):
 
 
 def show_direct(host, user, remote_dir, pattern, key, port, use_sshpass, password,
-                watch_actions, filter_date="", from_file=""):
+                watch_actions, filter_date="", from_file="", window_minutes=0):
     """Đọc audit log (SSH hoặc file) và HIỂN THỊ thay đổi ra màn hình."""
     if from_file:
         raw, rc = _read_file_raw(from_file)
@@ -294,9 +312,10 @@ def show_direct(host, user, remote_dir, pattern, key, port, use_sshpass, passwor
         print("❌ Không đọc được audit log (rc=%d). Kiểm tra host(IP)/user/password/mạng." % rc)
         return 1
 
-    changes, iso_date = _get_changes(raw, watch_actions, filter_date)
+    changes, iso_date = _get_changes(raw, watch_actions, filter_date, window_minutes)
 
-    title_date = f"   |   NGÀY {iso_date}" if iso_date else ""
+    title_date = (f"   |   {window_minutes}' GẦN NHẤT" if window_minutes
+                  else (f"   |   NGÀY {iso_date}" if iso_date else ""))
     print("=" * 78)
     print(f" AUDIT MGW — {host}{title_date}   |   {len(changes)} thay đổi cấu hình")
     print("=" * 78)
@@ -321,7 +340,7 @@ def show_direct(host, user, remote_dir, pattern, key, port, use_sshpass, passwor
 
 def daily_alert(host, user, remote_dir, pattern, key, port, use_sshpass, password,
                 watch_actions, filter_date, tg_token, tg_chat, seen_path,
-                summary_threshold=12, dry_run=False, from_file=""):
+                summary_threshold=12, dry_run=False, from_file="", window_minutes=0):
     """
     MỤC TIÊU CHÍNH: đẩy cảnh báo Telegram các thay đổi audit THEO NGÀY.
       - SSH lấy audit log của ngày (filter_date).
@@ -354,8 +373,9 @@ def daily_alert(host, user, remote_dir, pattern, key, port, use_sshpass, passwor
         # Tra -1 = LOI (phan biet voi "so tin da gui" >=0). main() quy doi ve exit!=0.
         return -1
 
-    changes, iso_date = _get_changes(raw, watch_actions, filter_date)
-    print(f"Ngày {iso_date or '(all)'}: {len(changes)} thay đổi cấu hình.")
+    changes, iso_date = _get_changes(raw, watch_actions, filter_date, window_minutes)
+    scope = f"{window_minutes}' gần nhất" if window_minutes else (iso_date or "(all)")
+    print(f"Phạm vi {scope}: {len(changes)} thay đổi cấu hình.")
 
     # Dedup.
     seen = set()
@@ -444,6 +464,10 @@ def main():
                     help="Chu kỳ quét khi --loop (giây, mặc định 60)")
     ap.add_argument("--all-days", action="store_true",
                     help="Với --alert: theo dõi TẤT CẢ (không giới hạn ngày) - phát hiện thay đổi mới bất kỳ")
+    ap.add_argument("--window", type=int, default=0,
+                    help="Chi lay thay doi trong N phut gan nhat (vd --window 10). "
+                         "Khong co thay doi -> khong alert. Phu hop AWX chay dinh ky "
+                         "moi N phut. Khi dung --window khong can dedup persistent.")
     ap.add_argument("--from-file", default="",
                     help="Doc audit log tu FILE da co san (khong SSH). Dung cho AWX: "
                          "Ansible tu lay log ve roi truyen file vao day.")
@@ -488,13 +512,20 @@ def main():
         def _one_pass():
             # seen theo NGÀY (hoặc 'all') -> dedup, chạy lại không gửi trùng.
             # Tra ve so tin da gui (>=0) hoac -1 neu LOI doc log.
-            fd = "" if args.all_days else (args.date or datetime_today())
+            # --window: loc theo cua so phut gan nhat, BO qua loc theo ngay.
+            if args.window and args.window > 0:
+                fd = ""
+            else:
+                fd = "" if args.all_days else (args.date or datetime_today())
+            # Khi dung --window, dedup theo file rieng (van tranh gui trung neu
+            # chay chong lap trong cung cua so).
+            seen_tag = f"win{args.window}" if args.window else (fd or "all")
             seen_path = str(Path(__file__).resolve().parent.parent / "logs" /
-                            f"seen_{fd or 'all'}.json")
+                            f"seen_{seen_tag}.json")
             return daily_alert(args.host, args.user, args.remote_dir, pattern, args.key,
                                args.port, args.sshpass, password, watch, fd,
                                tg_token, tg_chat, seen_path, dry_run=args.dry_run,
-                               from_file=args.from_file)
+                               from_file=args.from_file, window_minutes=args.window)
 
         # LOOP: quét liên tục, có thay đổi MỚI -> alert NGAY.
         if args.loop:
@@ -517,9 +548,11 @@ def main():
 
     # Chế độ xem trực tiếp: SSH -> parse -> in màn hình, không lưu file.
     if args.show:
+        fd_show = "" if args.window else filter_date
         return show_direct(args.host, args.user, args.remote_dir, pattern,
                            args.key, args.port, args.sshpass, password, watch,
-                           filter_date=filter_date, from_file=args.from_file)
+                           filter_date=fd_show, from_file=args.from_file,
+                           window_minutes=args.window)
 
     if args.method == "scp":
         ok, msg = collect_scp(args.host, args.user, args.remote_dir, args.pattern,

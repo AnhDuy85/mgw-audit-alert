@@ -86,13 +86,21 @@ python collect_audit.py --alert --today --dry-run   # xem trước, không gửi
 python collect_audit.py --alert --today             # gửi thật
 ```
 
+**Cảnh báo theo CỬA SỔ thời gian (khuyến nghị cho AWX định kỳ):**
+```bash
+python collect_audit.py --alert --window 10 --from-file <log>  # 10' gần nhất
+```
+Chỉ lấy thay đổi trong N phút gần nhất. **Không có thay đổi -> không alert.**
+Đặt N = chu kỳ AWX Schedule (vd chạy mỗi 10' -> `--window 10`). Dùng cách này
+thì không cần dedup persistent giữa các lần chạy.
+
 **Cảnh báo NGAY khi có thay đổi (loop liên tục):**
 ```bash
 python collect_audit.py --alert --loop --interval 30
 ```
 Quét mỗi 30s, phát hiện thay đổi mới -> alert ngay (độ trễ ~30s).
 
-Tùy chọn: `--all-days` (theo dõi mọi ngày, không giới hạn hôm nay).
+Tùy chọn: `--all-days` (theo dõi mọi ngày), `--today` (chỉ hôm nay).
 
 ---
 
