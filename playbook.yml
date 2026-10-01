@@ -171,10 +171,17 @@
         path: "{{ raw_log_file }}"
         state: absent
 
-    - name: Bao fail neu script loi
+    # Script tra ve so tin da gui (rc = so tin, vd rc=6) tren ban cu, hoac
+    # rc=0 tren ban moi. Chi coi la LOI khi stdout bao loi doc log ("Khong doc
+    # duoc") hoac khong co dong "Da gui"/"cần cảnh báo". Tranh fail nham khi
+    # da gui alert thanh cong.
+    - name: Bao fail neu script loi THUC SU
       ansible.builtin.fail:
-        msg: "collect_audit.py tra rc={{ result.rc }}. Xem Output o tren."
-      when: result.rc | default(1) != 0
+        msg: "collect_audit.py loi (rc={{ result.rc }}). Xem Output o tren."
+      when: >-
+        ('Không đọc được' in (result.stdout | default('')))
+        or ('Thiếu Telegram' in (result.stdout | default('')))
+        or (result.stdout | default('') | length == 0)
 
     # Luu y: dedup state logs/seen_*.json chi hieu luc neu AWX mount persistent
     # volume vao {{ project_dir }}/logs. Neu khong, moi lan chay coi tat ca la moi.
