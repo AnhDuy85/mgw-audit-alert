@@ -1,0 +1,79 @@
+# ============================================================
+# Playbook: MGW Audit Alert (AWX)
+# Mục đích : SSH vào McAfee/Trellix Web Gateway lấy audit log,
+#            lọc thay đổi cấu hình (ADD/DELETE/MODIFIED content,
+#            MODIFIED rule) và gửi cảnh báo Telegram.
+#            Chạy định kỳ qua AWX Schedule (vd mỗi 1 phút) để
+#            cảnh báo gần real-time các thay đổi trong ngày.
+#
+# Credential (KHÔNG commit - lấy từ AWX):
+#   - Machine/Custom credential MGW -> env MGW_HOST / MGW_USER /
+#     MGW_SSH_PASSWORD (hoặc SSH key).
+#   - Telegram credential -> env TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID.
+#
+# Yêu cầu: AWX EE có python3 + ssh/sshpass (hoặc dùng SSH key).
+#          Toàn bộ code Python chỉ dùng stdlib (không pip).
+# ============================================================
+
+- name: MGW Audit Alert - gui canh bao thay doi cau hinh ra Telegram
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    project_dir: "{{ playbook_dir }}"
+    python_bin: "python3"
+    # Phạm vi quét: today = chỉ thay đổi trong ngày (khuyến nghị cho alert
+    # hằng ngày). Đặt scan_scope=all để theo dõi mọi ngày.
+    scan_scope: "today"
+    # Nếu dùng sshpass (EE có sshpass + MGW_SSH_PASSWORD). Nếu dùng SSH key,
+    # đặt use_sshpass=false và cung cấp ssh_key_path.
+    use_sshpass: true
+    ssh_key_path: ""
+
+  tasks:
+    - name: Kiem tra python3
+      ansible.builtin.command: "{{ python_bin }} --version"
+      register: py_check
+      changed_when: false
+
+    - name: Kiem tra credential MGW va Telegram da duoc gan (env tu AWX)
+      ansible.builtin.assert:
+        that:
+          - lookup('env', 'MGW_HOST') | length > 0
+          - lookup('env', 'TELEGRAM_BOT_TOKEN') | length > 0
+          - lookup('env', 'TELEGRAM_CHAT_ID') | length > 0
+        fail_msg: >-
+          Thieu credential. Gan vao Job Template: MGW (env MGW_HOST/MGW_USER/
+          MGW_SSH_PASSWORD) va Telegram (env TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID).
+
+    - name: Build tham so scope
+      ansible.builtin.set_fact:
+        scope_flag: "{{ '--today' if scan_scope == 'today' else '--all-days' }}"
+        key_flag: "{{ ('--key ' + ssh_key_path) if (ssh_key_path | length > 0) else '' }}"
+        sshpass_flag: "{{ '--sshpass' if (use_sshpass | bool and ssh_key_path | length == 0) else '' }}"
+
+    # Chạy engine: --alert gửi Telegram, --yes bỏ xác nhận (tự động hoá).
+    # Host/user/password/token đọc từ env (AWX inject) - KHÔNG hardcode.
+    - name: Chay MGW audit alert
+      ansible.builtin.command:
+        cmd: >-
+          {{ python_bin }} {{ project_dir }}/scripts/collect_audit.py
+          --alert {{ scope_flag }} {{ key_flag }} {{ sshpass_flag }}
+        chdir: "{{ project_dir }}/scripts"
+      register: result
+      changed_when: "'Đã gửi' in result.stdout"
+      timeout: 120
+      environment:
+        PYTHONUNBUFFERED: "1"
+        TZ: "Asia/Ho_Chi_Minh"
+        MGW_HOST: "{{ lookup('env', 'MGW_HOST') }}"
+        MGW_USER: "{{ lookup('env', 'MGW_USER') | default('pci-dss', true) }}"
+        MGW_SSH_PASSWORD: "{{ lookup('env', 'MGW_SSH_PASSWORD') }}"
+        TELEGRAM_BOT_TOKEN: "{{ lookup('env', 'TELEGRAM_BOT_TOKEN') }}"
+        TELEGRAM_CHAT_ID: "{{ lookup('env', 'TELEGRAM_CHAT_ID') }}"
+
+    - name: Output
+      ansible.builtin.debug:
+        msg: "{{ result.stdout_lines }}"
+      when: result.stdout_lines | length > 0

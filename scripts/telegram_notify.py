@@ -91,23 +91,14 @@ def build_alert_mgw(ev):
         lines.append(f"📁 <b>Đường dẫn :</b> <code>{_esc(src_path)}</code>")
     lines.append(f"🕐 <b>Thời gian :</b> <code>{_esc(date_s)} {_esc(time_s)}</code>")
 
-    # Khử TRÙNG LẶP entries (MODIFIED_CONTENT hay ghi cả giá trị cũ+mới trùng
-    # nhau -> 10.8.1.13, 10.8.1.13...). Giữ thứ tự xuất hiện, chỉ hiện giá trị
-    # duy nhất (thông tin thực sự thay đổi).
-    uniq = []
-    seen_e = set()
-    for e in entries:
-        if e not in seen_e:
-            seen_e.add(e)
-            uniq.append(e)
-
-    if uniq:
-        shown = uniq[:15]
-        lines.append(f"📝 <b>Chi tiết ({len(uniq)}):</b>")
+    # entries đã được khử trùng lặp ở tầng parser (audit_parser._parse_block).
+    if entries:
+        shown = entries[:15]
+        lines.append(f"📝 <b>Chi tiết ({len(entries)}):</b>")
         for e in shown:
             lines.append(f"   • <code>{_esc(e)}</code>")
-        if len(uniq) > len(shown):
-            lines.append(f"   • ... và {len(uniq) - len(shown)} mục khác")
+        if len(entries) > len(shown):
+            lines.append(f"   • ... và {len(entries) - len(shown)} mục khác")
 
     # Comment (nếu audit log ghi comment cho thay đổi).
     comment = ev.get("comment", "")

@@ -41,10 +41,19 @@ def collect_scp(host, user, remote_dir, pattern, dest, key, port, use_sshpass, p
     Path(dest).mkdir(parents=True, exist_ok=True)
     remote = f"{user}@{host}:{remote_dir}/{pattern}"
 
+    # Auto-login bằng pscp (PuTTY) khi có password và không có sshpass (Windows).
+    pscp = _find_pscp()
+    if password and pscp and not (use_sshpass and _has_sshpass()):
+        cmd = [pscp, "-P", str(port), "-pw", password, "-batch", remote, str(dest)]
+        r = run([c if c != password else "***" for c in cmd[:3]] + ["-pw", "***", "-batch", remote, str(dest)]) if False else subprocess.run(cmd, capture_output=True, text=True, input="y\n")
+        if r.returncode != 0:
+            print((r.stderr or "").strip()[:300])
+            return False, (r.stderr or "").strip()
+        return True, ""
+
     base = []
     if use_sshpass and password:
         base = ["sshpass", "-p", password]
-
     scp = base + ["scp", "-P", str(port), "-o", "StrictHostKeyChecking=no"]
     if key:
         scp += ["-i", os.path.expanduser(key)]
@@ -132,16 +141,31 @@ def load_secret():
     }
 
 
-def _find_plink():
-    """Tìm plink (PuTTY) để login bằng password không cần sshpass."""
+def _find_tool(name, win_dirs):
     import shutil
-    p = shutil.which("plink")
+    p = shutil.which(name)
     if p:
         return p
-    for cand in [r"C:\Program Files\PuTTY\plink.exe", r"C:\Program Files (x86)\PuTTY\plink.exe"]:
+    for d in win_dirs:
+        cand = os.path.join(d, name + ".exe")
         if os.path.exists(cand):
             return cand
     return None
+
+
+def _find_plink():
+    """Tìm plink (PuTTY) để login bằng password không cần sshpass."""
+    return _find_tool("plink", [r"C:\Program Files\PuTTY", r"C:\Program Files (x86)\PuTTY"])
+
+
+def _find_pscp():
+    """Tìm pscp (PuTTY) để scp login bằng password không cần sshpass."""
+    return _find_tool("pscp", [r"C:\Program Files\PuTTY", r"C:\Program Files (x86)\PuTTY"])
+
+
+def _has_sshpass():
+    import shutil
+    return shutil.which("sshpass") is not None
 
 
 def fetch_audit_raw(host, user, remote_dir, pattern, key, port, use_sshpass, password, quiet=False):
@@ -183,16 +207,12 @@ def _get_changes(raw, watch_actions, filter_date=""):
     if iso_date:
         changes = [e for e in changes if e.get("date") == iso_date]
 
-    # KHỬ DUPLICATE ở 2 tầng:
-    # (1) entries trong từng sự kiện: bỏ giá trị lặp (MODIFIED ghi cũ+mới trùng).
-    # (2) sự kiện trùng nhau: cùng (timestamp,user,action,source,entries) -> giữ 1.
+    # Khử SỰ KIỆN trùng nhau (entries đã được parser khử trùng lặp sẵn):
+    # cùng (timestamp, user, action, source, entries) -> giữ 1.
     seen_ev = set()
     deduped = []
     for e in changes:
-        uniq_entries = list(dict.fromkeys(e.get("entries", [])))  # giữ thứ tự, bỏ trùng
-        e["entries"] = uniq_entries
-        key = (e.get("timestamp_raw", ""), e.get("user", ""), e.get("action", ""),
-               e.get("source_name", ""), tuple(uniq_entries))
+        key = ap_mod.dedup_key(e)
         if key in seen_ev:
             continue
         seen_ev.add(key)
@@ -369,6 +389,12 @@ def main():
         filter_date = ""
     else:
         filter_date = args.date or datetime_today()
+
+    # --loop chỉ có nghĩa với --alert (quét liên tục để cảnh báo). Nếu người
+    # dùng chỉ truyền --loop, tự hiểu là alert loop (tránh rơi vào nhánh scp).
+    if args.loop and not args.alert and not args.show:
+        print("ℹ️  --loop ngụ ý --alert. Tự bật chế độ alert loop.")
+        args.alert = True
 
     if args.alert:
         tg_token = os.environ.get("TELEGRAM_BOT_TOKEN") or _sec_tg.get("bot_token", "")

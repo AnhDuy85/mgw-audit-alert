@@ -7,6 +7,11 @@ config/secret.json
 logs/
 *.log
 
+# Log audit thật collect về từ MGW (chứa dữ liệu nhạy cảm) - KHÔNG commit.
+# Giữ lại audit_test.log làm mẫu.
+sample_logs/*
+!sample_logs/audit_test.log
+
 # Python
 __pycache__/
 *.pyc

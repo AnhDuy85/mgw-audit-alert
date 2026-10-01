@@ -1,0 +1,54 @@
+________________________________________________________________________________
+Timestamp  : 18/Sep/2026:09:30:37.487 +0700
+User       : truongtrilinh_a
+Action     : USER_LOGIN
+Source Type: USER
+Source ID  : 10.4.87.11
+Appliance  : DC-INT-MGW5500F-01
+Details:
+   User-Agent: Java/1.8.0_452
+   Role    : Super Administrator
+
+
+________________________________________________________________________________
+Timestamp  : 18/Sep/2026:09:36:38.470 +0700
+User       : truongtrilinh_a
+Action     : DELETED_CONTENT
+Source Name: Whitelist_SVR
+Source Type: LIST<IP>
+Source ID  : com.scur.type.ip.877
+Source Path: /Lists/IP/
+Appliance  : DC-INT-MGW5500F-01
+Details:
+   Entry   : 10.4.90.95
+   Position: 83
+
+   Entry   : 10.4.27.26
+   Position: 66
+
+   Entry   : 10.4.27.27
+   Position: 65
+
+
+________________________________________________________________________________
+Timestamp  : 18/Sep/2026:10:05:12.000 +0700
+User       : admin02
+Action     : ADDED_CONTENT
+Source Name: Blacklist_URL
+Source Type: LIST<String>
+Source Path: /Lists/URL/
+Appliance  : DC-INT-MGW5500F-01
+Details:
+   Entry   : badsite.example.com
+   Position: 1
+
+
+________________________________________________________________________________
+Timestamp  : 17/Sep/2026:11:05:00.000 +0700
+User       : admin02
+Action     : MODIFIED_RULE
+Source Name: Block Streaming
+Source Type: RULE
+Source Path: /Rule Sets/Common/
+Appliance  : DC-INT-MGW5500F-01
+Details:
