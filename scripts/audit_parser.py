@@ -88,6 +88,7 @@ def _parse_block(lines):
         "source_name": "", "source_type": "", "source_id": "",
         "source_path": "", "appliance": "", "comment": "",
         "details": [], "entries": [],
+        "raw_fields": {},  # gom MOI field key:val gap (de debug ten field comment)
     }
     in_details = False
     cur_detail = {}
@@ -114,9 +115,18 @@ def _parse_block(lines):
         key, val = m.group(1).strip(), m.group(2).strip()
         key_lc = key.lower()
 
+        # Luu moi field gap (ca cap tren lan Details) de co the debug ten field.
+        if key and val:
+            event["raw_fields"].setdefault(key, val)
+
         # COMMENT / LY DO MO: bat o CA 2 cap (cap tren va trong Details).
-        # Giu gia tri khong rong dau tien; neu co nhieu dong comment, noi lai.
-        if key_lc in _COMMENT_KEYS and val:
+        # Nhan dien linh hoat: khop CHINH XAC trong _COMMENT_KEYS HOAC ten field
+        # CHUA mot trong cac tu khoa (comment/reason/note/ticket/request/
+        # justification...) - de bat moi bien the MGW ghi comment.
+        is_comment = key_lc in _COMMENT_KEYS or any(
+            kw in key_lc for kw in ("comment", "reason", "note", "ticket", "request", "justif")
+        )
+        if is_comment and val:
             if event["comment"]:
                 if val not in event["comment"]:
                     event["comment"] += " | " + val

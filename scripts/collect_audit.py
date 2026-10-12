@@ -471,6 +471,9 @@ def main():
     ap.add_argument("--from-file", default="",
                     help="Doc audit log tu FILE da co san (khong SSH). Dung cho AWX: "
                          "Ansible tu lay log ve roi truyen file vao day.")
+    ap.add_argument("--debug-fields", action="store_true",
+                    help="CHAN DOAN: in ra TAT CA ten field gap trong audit log "
+                         "(de biet MGW ghi comment/ly do duoi ten gi). Khong gui Telegram.")
     args = ap.parse_args()
 
     # Với --today/--date: LẤY TẤT CẢ audit*.log (glob '*' bền vững trên mọi sh,
@@ -500,6 +503,42 @@ def main():
     if args.loop and not args.alert and not args.show:
         print("ℹ️  --loop ngụ ý --alert. Tự bật chế độ alert loop.")
         args.alert = True
+
+    # CHAN DOAN: in tat ca ten field (giup tim dung ten field comment).
+    if args.debug_fields:
+        if args.from_file:
+            raw, rc = _read_file_raw(args.from_file)
+        else:
+            raw, rc = fetch_audit_raw(args.host, args.user, args.remote_dir, pattern,
+                                      args.key, args.port, args.sshpass, password)
+        if rc != 0 or not raw.strip():
+            print("❌ Không đọc được audit log (rc=%d)." % rc)
+            return 1
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import audit_parser as ap_mod
+        events = ap_mod.parse_audit_text(raw)
+        from collections import Counter
+        field_counter = Counter()
+        comment_samples = []
+        for e in events:
+            for k, v in e.get("raw_fields", {}).items():
+                field_counter[k] += 1
+                kl = k.lower()
+                if any(w in kl for w in ("comment", "reason", "note", "ticket", "request", "justif")):
+                    comment_samples.append(f"{k} = {v}")
+        print("=" * 60)
+        print(" TAT CA TEN FIELD gap trong audit log (so lan xuat hien):")
+        print("=" * 60)
+        for k, n in field_counter.most_common():
+            print(f"  {n:4d}x  {k}")
+        print("\n Cac field CO VE la comment/ly do:")
+        if comment_samples:
+            for s in comment_samples[:20]:
+                print("  •", s)
+        else:
+            print("  (khong tim thay field nao chua comment/reason/note/ticket/request)")
+            print("  -> Audit log co the KHONG ghi comment, hoac MGW dung ten field khac.")
+        return 0
 
     if args.alert:
         tg_token = os.environ.get("TELEGRAM_BOT_TOKEN") or _sec_tg.get("bot_token", "")
