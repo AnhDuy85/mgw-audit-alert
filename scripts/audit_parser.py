@@ -49,6 +49,15 @@ _FIELD_MAP = {
     "Change Comment": "comment",
 }
 
+# Cac ten field (viet thuong) duoc coi la "comment / ly do thay doi".
+# MGW tuy phien ban/cau hinh co the ghi comment duoi nhieu ten khac nhau,
+# va co the nam o cap tren HOAC trong phan Details.
+_COMMENT_KEYS = {
+    "comment", "change comment", "changecomment",
+    "reason", "change reason", "description",
+    "ticket", "change request", "change id", "note", "notes",
+}
+
 
 def parse_mgw_timestamp(s):
     """
@@ -103,6 +112,19 @@ def _parse_block(lines):
         if not m:
             continue
         key, val = m.group(1).strip(), m.group(2).strip()
+        key_lc = key.lower()
+
+        # COMMENT / LY DO MO: bat o CA 2 cap (cap tren va trong Details).
+        # Giu gia tri khong rong dau tien; neu co nhieu dong comment, noi lai.
+        if key_lc in _COMMENT_KEYS and val:
+            if event["comment"]:
+                if val not in event["comment"]:
+                    event["comment"] += " | " + val
+            else:
+                event["comment"] = val
+            if in_details:
+                cur_detail[key] = val  # van luu vao detail de khong mat du lieu
+            continue
 
         if not in_details and key in _FIELD_MAP:
             event[_FIELD_MAP[key]] = val

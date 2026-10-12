@@ -100,10 +100,12 @@ def build_alert_mgw(ev):
         if len(entries) > len(shown):
             lines.append(f"   • ... và {len(entries) - len(shown)} mục khác")
 
-    # Comment (nếu audit log ghi comment cho thay đổi).
+    # LÝ DO MỞ / Comment (nếu audit log ghi comment cho thay đổi).
     comment = ev.get("comment", "")
     if comment:
-        lines.append(f"💬 <b>Comment   :</b> <code>{_esc(comment)}</code>")
+        lines.append(f"📝 <b>Lý do/Comment:</b> <code>{_esc(comment)}</code>")
+    else:
+        lines.append("📝 <b>Lý do/Comment:</b> <i>(không có trong audit log)</i>")
 
     return "\n".join(lines)
 
