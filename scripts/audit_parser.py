@@ -58,6 +58,35 @@ _COMMENT_KEYS = {
     "ticket", "change request", "change id", "note", "notes",
 }
 
+# Mã Change Request / ticket ServiceDesk (SHB): "SD" + >=4 chữ số (vd SD123456).
+# Chap nhan ca "SD 123456", "SD-123456", "SD#123456".
+_CR_RE = re.compile(r"\bSD[\s\-#]?(\d{4,})\b", re.IGNORECASE)
+
+
+def extract_cr_code(comment):
+    """Trich ma CR dang SDxxxxxx tu comment (neu co). Tra ve 'SD123456' hoac ''."""
+    if not comment:
+        return ""
+    m = _CR_RE.search(comment)
+    return ("SD" + m.group(1)) if m else ""
+
+
+def classify_comment(comment):
+    """
+    Phan loai comment lam CAN CU cho thay doi:
+      - 'cr'    : co ma Change Request (SDxxxxxx) -> can doi soat ServiceDesk.
+      - 'note'  : co ghi chu nhung KHONG phai ma CR (vd ten nguoi) -> can xac minh.
+      - 'empty' : khong co comment -> KHONG co can cu, canh bao cao.
+    Tra ve (loai, ma_cr).  ma_cr rong neu khong phai loai 'cr'.
+    """
+    c = (comment or "").strip()
+    if not c:
+        return "empty", ""
+    cr = extract_cr_code(c)
+    if cr:
+        return "cr", cr
+    return "note", ""
+
 
 def parse_mgw_timestamp(s):
     """

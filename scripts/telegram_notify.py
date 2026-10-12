@@ -100,12 +100,25 @@ def build_alert_mgw(ev):
         if len(entries) > len(shown):
             lines.append(f"   • ... và {len(entries) - len(shown)} mục khác")
 
-    # LÝ DO MỞ / Comment (nếu audit log ghi comment cho thay đổi).
+    # LÝ DO/CĂN CỨ: phân loại comment thành CR / ghi chú / không có.
     comment = ev.get("comment", "")
-    if comment:
-        lines.append(f"📝 <b>Lý do/Comment:</b> <code>{_esc(comment)}</code>")
-    else:
-        lines.append("📝 <b>Lý do/Comment:</b> <i>(không có trong audit log)</i>")
+    try:
+        import audit_parser as _ap
+        kind, cr = _ap.classify_comment(comment)
+    except Exception:
+        kind, cr = ("cr" if comment else "empty"), ""
+
+    if kind == "cr":
+        lines.append(f"📝 <b>Căn cứ (CR):</b> <code>{_esc(cr)}</code>  🟢")
+        if comment.strip() != cr:
+            lines.append(f"      <i>Comment gốc:</i> <code>{_esc(comment)}</code>")
+        lines.append("      <i>→ Cần đối soát ServiceDesk để xác nhận ticket đã duyệt.</i>")
+    elif kind == "note":
+        lines.append(f"📝 <b>Ghi chú:</b> <code>{_esc(comment)}</code>  🟡")
+        lines.append("      <i>→ Chưa có mã CR (SDxxxxxx). Cần xác minh căn cứ thay đổi.</i>")
+    else:  # empty
+        lines.append("📝 <b>Căn cứ:</b> <b>⚠️ KHÔNG CÓ COMMENT</b>  🔴")
+        lines.append("      <i>→ Thay đổi không ghi lý do/CR. Kiểm tra ngay: có thể trái phép.</i>")
 
     return "\n".join(lines)
 
