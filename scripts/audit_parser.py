@@ -121,26 +121,50 @@ def _parse_block(lines):
     }
     in_details = False
     cur_detail = {}
+    collecting_comment = False  # dang gom comment DA DONG (val o dong(s) ke tiep)
+
+    def _is_comment_key(k):
+        kl = k.lower()
+        return kl in _COMMENT_KEYS or any(
+            kw in kl for kw in ("comment", "reason", "note", "ticket", "request", "justif")
+        )
+
+    def _add_comment(v):
+        v = (v or "").strip()
+        if not v:
+            return
+        if event["comment"]:
+            if v not in event["comment"]:
+                event["comment"] += " | " + v
+        else:
+            event["comment"] = v
 
     for line in lines:
         raw = line.rstrip("\n")
         stripped = raw.strip()
         if not stripped:
-            # Dòng trống: kết thúc 1 detail entry (nếu đang gom).
+            # Dòng trống: kết thúc 1 detail entry + kết thúc gom comment.
             if cur_detail:
                 event["details"].append(cur_detail)
                 cur_detail = {}
+            collecting_comment = False
             continue
 
         # Bắt đầu phần Details:
         if stripped.rstrip(":").lower() == "details":
             in_details = True
+            collecting_comment = False
             continue
 
         # Field cấp trên bám lề trái (raw); field trong Details thụt lề (stripped).
         m = _FIELD_RE.match(raw if not in_details else stripped)
         if not m:
+            # Dòng KHÔNG phải "Key : value": nếu đang gom comment đa dòng,
+            # đây là phần nội dung comment ở dòng kế (vd mã CR xuống dòng).
+            if collecting_comment:
+                _add_comment(stripped)
             continue
+
         key, val = m.group(1).strip(), m.group(2).strip()
         key_lc = key.lower()
 
@@ -148,22 +172,17 @@ def _parse_block(lines):
         if key and val:
             event["raw_fields"].setdefault(key, val)
 
-        # COMMENT / LY DO MO: bat o CA 2 cap (cap tren va trong Details).
-        # Nhan dien linh hoat: khop CHINH XAC trong _COMMENT_KEYS HOAC ten field
-        # CHUA mot trong cac tu khoa (comment/reason/note/ticket/request/
-        # justification...) - de bat moi bien the MGW ghi comment.
-        is_comment = key_lc in _COMMENT_KEYS or any(
-            kw in key_lc for kw in ("comment", "reason", "note", "ticket", "request", "justif")
-        )
-        if is_comment and val:
-            if event["comment"]:
-                if val not in event["comment"]:
-                    event["comment"] += " | " + val
-            else:
-                event["comment"] = val
-            if in_details:
-                cur_detail[key] = val  # van luu vao detail de khong mat du lieu
+        # COMMENT / LY DO MO: bat o CA 2 cap (cap tren va trong Details),
+        # va ho tro comment DA DONG (val rong -> noi dung o dong ke tiep).
+        if _is_comment_key(key):
+            _add_comment(val)
+            collecting_comment = True  # gom tiep cac dong noi dung (neu co)
+            if in_details and val:
+                cur_detail[key] = val
             continue
+
+        # Gap field khac -> ngung gom comment.
+        collecting_comment = False
 
         if not in_details and key in _FIELD_MAP:
             event[_FIELD_MAP[key]] = val
