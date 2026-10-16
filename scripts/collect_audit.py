@@ -546,7 +546,10 @@ def main():
             for k, v in e.get("raw_fields", {}).items():
                 field_counter[k] += 1
                 kl = k.lower()
-                if any(w in kl for w in ("comment", "reason", "note", "ticket", "request", "justif")):
+                # Loai field cau hinh rule MGW (Cycle*, *Request/*Response) de khong bao nham.
+                if "cycle" in kl or kl.endswith("request") or kl.endswith("response"):
+                    continue
+                if any(w in kl for w in ("comment", "reason", "ticket", "justif")):
                     comment_samples.append(f"{k} = {v}")
         print("=" * 60)
         print(" TAT CA TEN FIELD gap trong audit log (so lan xuat hien):")

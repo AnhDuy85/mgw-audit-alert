@@ -125,9 +125,17 @@ def _parse_block(lines):
 
     def _is_comment_key(k):
         kl = k.lower()
-        return kl in _COMMENT_KEYS or any(
-            kw in kl for kw in ("comment", "reason", "note", "ticket", "request", "justif")
-        )
+        # Khop CHINH XAC trong _COMMENT_KEYS, HOAC ten field chua tu khoa comment.
+        # KHONG dung "request"/"note" dang chung vi MGW co field cau hinh rule
+        # nhu "CycleRequest"/"CycleResponse" -> se bat nham thanh comment.
+        # Chi nhan tu khoa DAC TRUNG cho ly do thay doi.
+        if kl in _COMMENT_KEYS:
+            return True
+        # Loai tru cac field cau hinh rule MGW (Cycle*, *Request/*Response ky thuat).
+        if "cycle" in kl or kl.endswith("request") or kl.endswith("response"):
+            return False
+        return any(kw in kl for kw in ("comment", "reason", "ticket", "justif",
+                                       "change request", "change id"))
 
     def _add_comment(v):
         v = (v or "").strip()
