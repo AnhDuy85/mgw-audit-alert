@@ -496,6 +496,11 @@ def main():
     ap.add_argument("--debug-fields", action="store_true",
                     help="CHAN DOAN: in ra TAT CA ten field gap trong audit log "
                          "(de biet MGW ghi comment/ly do duoi ten gi). Khong gui Telegram.")
+    ap.add_argument("--dump-raw", action="store_true",
+                    help="CHAN DOAN: in NGUYEN VAN cac block audit log tho (khong qua parser) "
+                         "+ highlight dong co the la comment. Dung de mat thuong kiem tra log that.")
+    ap.add_argument("--dump-limit", type=int, default=5,
+                    help="So block in ra khi --dump-raw (mac dinh 5 block gan nhat).")
     args = ap.parse_args()
 
     # Với --today/--date: LẤY TẤT CẢ audit*.log (glob '*' bền vững trên mọi sh,
@@ -525,6 +530,52 @@ def main():
     if args.loop and not args.alert and not args.show:
         print("ℹ️  --loop ngụ ý --alert. Tự bật chế độ alert loop.")
         args.alert = True
+
+    # CHAN DOAN: in NGUYEN VAN block log tho (de mat thuong tim cot comment).
+    if args.dump_raw:
+        if args.from_file:
+            raw, rc = _read_file_raw(args.from_file)
+        else:
+            raw, rc = fetch_audit_raw(args.host, args.user, args.remote_dir, pattern,
+                                      args.key, args.port, args.sshpass, password)
+        if rc != 0 or not raw.strip():
+            print("❌ Không đọc được audit log (rc=%d)." % rc)
+            return 1
+        # Tach block theo dong gach duoi (_x80), lay cac block CO Action thuoc watch.
+        import re as _re
+        sep = _re.compile(r"^_{10,}\s*$")
+        blocks, cur = [], []
+        for line in raw.splitlines():
+            if sep.match(line):
+                if cur:
+                    blocks.append(cur); cur = []
+            else:
+                cur.append(line)
+        if cur:
+            blocks.append(cur)
+
+        # Uu tien block co action ADDED/DELETED (ban noi co comment khi them/xoa).
+        def _block_action(b):
+            for ln in b:
+                if ln.strip().lower().startswith("action"):
+                    return ln.split(":", 1)[-1].strip() if ":" in ln else ln.split()[-1]
+            return ""
+        want = ("ADDED", "DELETED")
+        prioritized = [b for b in blocks if any(w in _block_action(b).upper() for w in want)]
+        chosen = (prioritized or blocks)[-args.dump_limit:]
+
+        print("=" * 70)
+        print(f" DUMP {len(chosen)} BLOCK AUDIT LOG THO (uu tien ADDED/DELETED)")
+        print(" -> Tim dong nao la comment/ly do, bao cho toi biet ten field do.")
+        print("=" * 70)
+        for i, b in enumerate(chosen, 1):
+            print(f"\n----- BLOCK {i} (action={_block_action(b)}) -----")
+            for ln in b:
+                # Highlight dong co the la comment (co dau ':' va keyword).
+                low = ln.lower()
+                mark = "  <== ?" if any(k in low for k in ("comment", "reason", "ticket", "change", "note", "justif")) else ""
+                print(f"  {ln}{mark}")
+        return 0
 
     # CHAN DOAN: in tat ca ten field (giup tim dung ten field comment).
     if args.debug_fields:
