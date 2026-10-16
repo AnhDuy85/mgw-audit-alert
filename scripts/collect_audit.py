@@ -314,6 +314,8 @@ def show_direct(host, user, remote_dir, pattern, key, port, use_sshpass, passwor
 
     changes, iso_date = _get_changes(raw, watch_actions, filter_date, window_minutes)
 
+    import audit_parser as ap_mod  # đã nằm trong sys.path từ _get_changes
+
     title_date = (f"   |   {window_minutes}' GẦN NHẤT" if window_minutes
                   else (f"   |   NGÀY {iso_date}" if iso_date else ""))
     print("=" * 78)
@@ -321,6 +323,10 @@ def show_direct(host, user, remote_dir, pattern, key, port, use_sshpass, passwor
     print("=" * 78)
     print(f"{'THỜI GIAN':<21}{'USER':<20}{'ACTION':<18}ĐỐI TƯỢNG")
     print("-" * 78)
+
+    # Đếm căn cứ (CR / ghi chú / KHÔNG có) để cảnh báo thay đổi thiếu căn cứ.
+    n_cr = n_note = n_empty = 0
+
     for e in changes:
         ts = f"{e.get('date','')} {e.get('time','')}".strip()
         print(f"{ts:<21}{e.get('user','?'):<20}{e.get('action','?'):<18}{e.get('source_name','') or e.get('source_type','')}")
@@ -328,6 +334,18 @@ def show_direct(host, user, remote_dir, pattern, key, port, use_sshpass, passwor
             preview = ", ".join(e["entries"][:5])
             more = f" (+{len(e['entries'])-5})" if len(e["entries"]) > 5 else ""
             print(f"{'':<59}↳ {preview}{more}")
+
+        # Căn cứ thay đổi (comment): phân loại CR / ghi chú / KHÔNG có.
+        kind, cr = ap_mod.classify_comment(e.get("comment", ""))
+        if kind == "cr":
+            n_cr += 1
+            print(f"{'':<59}📝 Căn cứ: CR {cr}" + (f"  ({e['comment']})" if e.get("comment", "").strip() != cr else ""))
+        elif kind == "note":
+            n_note += 1
+            print(f"{'':<59}📝 Ghi chú: {e.get('comment', '')}  (chưa có mã CR)")
+        else:
+            n_empty += 1
+            print(f"{'':<59}⚠️  KHÔNG CÓ comment/căn cứ — cần kiểm tra")
     print("-" * 78)
 
     # Thống kê theo action.
@@ -335,6 +353,10 @@ def show_direct(host, user, remote_dir, pattern, key, port, use_sshpass, passwor
     cnt = Counter(e.get("action") for e in changes)
     if cnt:
         print(" Tổng theo action:", "  ".join(f"{a}={n}" for a, n in cnt.most_common()))
+    # Thống kê theo CĂN CỨ.
+    if changes:
+        print(f" Căn cứ: CR={n_cr}  ghi_chú={n_note}  KHÔNG_CÓ={n_empty}"
+              + ("  ⚠️ có thay đổi thiếu căn cứ!" if n_empty else ""))
     return 0
 
 
