@@ -53,8 +53,12 @@ _FIELD_MAP = {
 # MGW tuy phien ban/cau hinh co the ghi comment duoi nhieu ten khac nhau,
 # va co the nam o cap tren HOAC trong phan Details.
 _COMMENT_KEYS = {
+    # QUAN TRONG: tren MGW cua SHB, comment/ly do thay doi ghi o field
+    # "Description" (xac nhan tu log that: ADDED/DELETED co cot Description).
+    "description",
+    # Cac bien the khac phong truong hop firmware/cau hinh khac:
     "comment", "change comment", "changecomment",
-    "reason", "change reason", "description",
+    "reason", "change reason",
     "ticket", "change request", "change id", "note", "notes",
 }
 
