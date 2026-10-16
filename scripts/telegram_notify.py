@@ -101,24 +101,29 @@ def build_alert_mgw(ev):
             lines.append(f"   • ... và {len(entries) - len(shown)} mục khác")
 
     # LÝ DO/CĂN CỨ: phân loại comment thành CR / ghi chú / không có.
+    # LƯU Ý: action XÓA (DELETED) trên MGW không ghi Description vào audit log
+    # -> KHÔNG hiển thị phần căn cứ cho DELETED (tránh báo nhầm "KHÔNG CÓ").
+    # Chỉ hiển thị căn cứ cho các action CÓ thể kèm Description (ADDED/MODIFIED).
+    is_delete = "DELET" in (action or "").upper()
     comment = ev.get("comment", "")
-    try:
-        import audit_parser as _ap
-        kind, cr = _ap.classify_comment(comment)
-    except Exception:
-        kind, cr = ("cr" if comment else "empty"), ""
+    if not is_delete:
+        try:
+            import audit_parser as _ap
+            kind, cr = _ap.classify_comment(comment)
+        except Exception:
+            kind, cr = ("cr" if comment else "empty"), ""
 
-    if kind == "cr":
-        lines.append(f"📝 <b>Căn cứ (CR):</b> <code>{_esc(cr)}</code>  🟢")
-        if comment.strip() != cr:
-            lines.append(f"      <i>Comment gốc:</i> <code>{_esc(comment)}</code>")
-        lines.append("      <i>→ Cần đối soát ServiceDesk để xác nhận ticket đã duyệt.</i>")
-    elif kind == "note":
-        lines.append(f"📝 <b>Ghi chú:</b> <code>{_esc(comment)}</code>  🟡")
-        lines.append("      <i>→ Chưa có mã CR (SDxxxxxx). Cần xác minh căn cứ thay đổi.</i>")
-    else:  # empty
-        lines.append("📝 <b>Căn cứ:</b> <b>⚠️ KHÔNG CÓ COMMENT</b>  🔴")
-        lines.append("      <i>→ Thay đổi không ghi lý do/CR. Kiểm tra ngay: có thể trái phép.</i>")
+        if kind == "cr":
+            lines.append(f"📝 <b>Căn cứ (SD/CR):</b> <code>{_esc(cr)}</code>  🟢")
+            if comment.strip() != cr:
+                lines.append(f"      <i>Comment gốc:</i> <code>{_esc(comment)}</code>")
+            lines.append("      <i>→ Cần đối soát ServiceDesk để xác nhận ticket đã duyệt.</i>")
+        elif kind == "note":
+            lines.append(f"📝 <b>Ghi chú:</b> <code>{_esc(comment)}</code>  🟡")
+            lines.append("      <i>→ Chưa có mã SD/CR. Cần xác minh căn cứ thay đổi.</i>")
+        else:  # empty
+            lines.append("📝 <b>Căn cứ:</b> <b>⚠️ KHÔNG CÓ COMMENT</b>  🔴")
+            lines.append("      <i>→ Thay đổi không ghi lý do/CR. Kiểm tra ngay: có thể trái phép.</i>")
 
     return "\n".join(lines)
 

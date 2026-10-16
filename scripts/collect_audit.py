@@ -336,16 +336,21 @@ def show_direct(host, user, remote_dir, pattern, key, port, use_sshpass, passwor
             print(f"{'':<59}↳ {preview}{more}")
 
         # Căn cứ thay đổi (comment): phân loại CR / ghi chú / KHÔNG có.
-        kind, cr = ap_mod.classify_comment(e.get("comment", ""))
-        if kind == "cr":
-            n_cr += 1
-            print(f"{'':<59}📝 Căn cứ: CR {cr}" + (f"  ({e['comment']})" if e.get("comment", "").strip() != cr else ""))
-        elif kind == "note":
-            n_note += 1
-            print(f"{'':<59}📝 Ghi chú: {e.get('comment', '')}  (chưa có mã CR)")
+        # Action XÓA (DELETED) không ghi Description -> KHÔNG đánh giá căn cứ.
+        is_delete = "DELET" in (e.get("action", "") or "").upper()
+        if is_delete:
+            pass  # bỏ dòng căn cứ với thao tác xóa
         else:
-            n_empty += 1
-            print(f"{'':<59}⚠️  KHÔNG CÓ comment/căn cứ — cần kiểm tra")
+            kind, cr = ap_mod.classify_comment(e.get("comment", ""))
+            if kind == "cr":
+                n_cr += 1
+                print(f"{'':<59}📝 Căn cứ (SD/CR): {cr}" + (f"  ({e['comment']})" if e.get("comment", "").strip() != cr else ""))
+            elif kind == "note":
+                n_note += 1
+                print(f"{'':<59}📝 Ghi chú: {e.get('comment', '')}  (chưa có mã SD/CR)")
+            else:
+                n_empty += 1
+                print(f"{'':<59}⚠️  KHÔNG CÓ comment/căn cứ — cần kiểm tra")
     print("-" * 78)
 
     # Thống kê theo action.
