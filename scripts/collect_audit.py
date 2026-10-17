@@ -350,7 +350,7 @@ def show_direct(host, user, remote_dir, pattern, key, port, use_sshpass, passwor
                 print(f"{'':<59}📝 Ghi chú: {e.get('comment', '')}  (chưa có mã SD/CR)")
             else:
                 n_empty += 1
-                print(f"{'':<59}⚠️  KHÔNG CÓ comment/căn cứ — cần kiểm tra")
+                print(f"{'':<59}⚠️  CHƯA CÓ căn cứ — yêu cầu bổ sung mã SD/CR vào Description")
     print("-" * 78)
 
     # Thống kê theo action.

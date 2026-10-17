@@ -121,9 +121,9 @@ def build_alert_mgw(ev):
         elif kind == "note":
             lines.append(f"📝 <b>Ghi chú:</b> <code>{_esc(comment)}</code>  🟡")
             lines.append("      <i>→ Chưa có mã SD/CR. Cần xác minh căn cứ thay đổi.</i>")
-        else:  # empty
-            lines.append("📝 <b>Căn cứ:</b> <b>⚠️ KHÔNG CÓ COMMENT</b>  🔴")
-            lines.append("      <i>→ Thay đổi không ghi lý do/CR. Kiểm tra ngay: có thể trái phép.</i>")
+        else:  # empty - THEM MOI nhung Description trong
+            lines.append("📝 <b>Căn cứ (SD/CR):</b> <b>⚠️ CHƯA CÓ</b>  🟠")
+            lines.append("      <i>→ Yêu cầu bổ sung thông tin căn cứ (mã SD/CR) cho thay đổi này vào trường Description.</i>")
 
     return "\n".join(lines)
 
